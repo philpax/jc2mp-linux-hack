@@ -23,3 +23,15 @@ The script checks binary hashes and instruction bytes before patching. Unsupport
 The script's header describes the startup failures and workarounds. It covers all three COM-registration checks used during GUI initialization. Patching only one check can trigger a process-exit request followed by a hang in DLL cleanup, leaving the last rendered frame visible.
 
 Regression tests run with `python3 -m unittest -v`. Three consecutive Steam launches reached the multiplayer menu after applying all three checks. Window-close requests can still take more than 25 seconds; clean exit is not verified.
+
+## Steam exits before launching the game
+
+A system D-Bus resource-quota failure can disconnect Steam. GLib then sends SIGTERM to Steam, which logs off and exits. The system journal identifies this failure with `dbus-broker` messages about insufficient resources to receive a reply. This is separate from the game startup patches.
+
+For this specific failure, stop Steam and start it with system-bus access disabled for that process:
+
+```sh
+STEAM_RUNTIME_LOGGER=0 DBUS_SYSTEM_BUS_ADDRESS=unix:path=/dev/null steam
+```
+
+The session bus remains available. System-bus integrations are unavailable until Steam restarts without the override. The path must exist because Steam's webhelper container mounts it; a nonexistent path prevents the webhelper from starting. This is a temporary diagnostic workaround, not a repair for the broker's resource exhaustion. Do not add these variables to the game's launch options as a general startup fix.
