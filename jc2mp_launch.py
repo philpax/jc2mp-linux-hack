@@ -25,11 +25,11 @@ jumps. Wine's memcpy export starts with such a jump, so the copied trampoline
 jumps into unrelated heap data. The script resolves that jump before Jcmp builds
 its hook.
 
-The base game's GUI initialization also checks for COM registration
-{808C8FA6-C09F-4CD0-85BF-78DF85877A7B}. It is absent in the tested Wine prefix;
-the failure path overwrites a return address and exits the game during loading.
-The script makes that check return success, then detaches all traced tasks.
-All three workarounds are in memory only; no game files or registry keys change.
+The base game's GUI initialization also has three COM-registration checks,
+including {808C8FA6-C09F-4CD0-85BF-78DF85877A7B}. Missing registrations in Wine
+can trigger failure paths that overwrite a return address and exit the game.
+The script makes all three checks return success, then detaches all traced tasks.
+All patches are in memory only; no game files or registry keys change.
 
 Known mod build: Steam 1867542. Tested with Proton Experimental 11.0 (20261014).
 The launcher, mod DLL and base game are hash-checked; unsupported builds or Wine
@@ -55,7 +55,7 @@ JCMP_SHA256 = "c4868f28aca9503b04d61a95925decee2945f99e8dbd4c064cd492ffc369edd4"
 HOOK_BUILDER_RVA = 0x1D6690
 GAME_SHA256 = "1966f28b80c8ac6e57e7e059526294de97fcd99aa11c444c601963e12bd94ff8"
 GAME_BASE = 0x400000
-GUI_CHECK_RVA = 0x412A0
+GUI_CHECK_RVAS = (0x412A0, 0x45340, 0x477F0)
 GUI_CHECK_ORIGINAL = bytes.fromhex("81 ec 84 00 00 00")
 ORIGINAL = bytes.fromhex("68 00 80 00 00 6a 00 57 ff 15 28 b0 40 00")
 
@@ -145,6 +145,21 @@ def write_memory(pid, address, data):
         original = read_memory(pid, at, WORD_SIZE)
         word = int.from_bytes(chunk + original[len(chunk) :], "little")
         ptrace(PTRACE_POKEDATA, pid, at, word)
+
+
+def patch_gui_checks(pid):
+    # Validate every site before patching any of them. Failure paths corrupt
+    # return addresses when the expected COM registrations are absent in Wine.
+    checks = [GAME_BASE + rva for rva in GUI_CHECK_RVAS]
+    for check in checks:
+        if read_memory(pid, check, len(GUI_CHECK_ORIGINAL)) != GUI_CHECK_ORIGINAL:
+            raise ValueError(f"unsupported GUI registration check at {check:#x}")
+    replacement = bytes.fromhex("b0 01 c3 90 90 90")
+    for check in checks:
+        write_memory(pid, check, replacement)
+        if read_memory(pid, check, len(replacement)) != replacement:
+            raise ValueError(f"GUI registration workaround verification failed at {check:#x}")
+        print(f"jc2mp-launch: patched GUI registration check at {check:#x}", flush=True)
 
 
 def inspect_launcher(path):
@@ -349,17 +364,7 @@ def trace_launch(command, launcher, timeout):
                             or hashlib.sha256(Path(game).read_bytes()).hexdigest() != GAME_SHA256
                         ):
                             raise ValueError("unsupported JustCause2.exe build or image base")
-                        check = GAME_BASE + GUI_CHECK_RVA
-                        if read_memory(pid, check, len(GUI_CHECK_ORIGINAL)) != GUI_CHECK_ORIGINAL:
-                            raise ValueError("unsupported GUI registration check prologue")
-                        # This check requires a COM registration absent in Wine. Its
-                        # failure path overwrites its return address and exits the game.
-                        # Return success without changing the prefix registry.
-                        replacement = bytes.fromhex("b0 01 c3 90 90 90")
-                        write_memory(pid, check, replacement)
-                        if read_memory(pid, check, len(replacement)) != replacement:
-                            raise ValueError("GUI registration workaround verification failed")
-                        print("jc2mp-launch: patched GUI registration check", flush=True)
+                        patch_gui_checks(pid)
                         registers.rcx = target
                         ptrace(PTRACE_SETREGS, pid, 0, ctypes.addressof(registers))
                         clear_breakpoint(pid)

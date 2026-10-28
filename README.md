@@ -20,4 +20,6 @@ Tested with JC2-MP Steam build 1867542 and Proton Experimental 11.0 (20261014). 
 
 The script checks binary hashes and instruction bytes before patching. Unsupported builds are rejected. System ptrace restrictions can prevent it from working; root is not required.
 
-The script's header describes the startup failures and workarounds.
+The script's header describes the startup failures and workarounds. It covers all three COM-registration checks used during GUI initialization. Patching only one check can trigger a process-exit request followed by a hang in DLL cleanup, leaving the last rendered frame visible.
+
+Regression tests run with `python3 -m unittest -v`. Three consecutive Steam launches reached the multiplayer menu after applying all three checks. Window-close requests can still take more than 25 seconds; clean exit is not verified.
